@@ -10,14 +10,27 @@ function handleRoom(socket, io) {
 
     socket.join(roomId);
 
+    // Get current player count
+    const room = io.sockets.adapter.rooms.get(roomId);
+    const playerCount = room ? room.size : 1;
+
     // Notify other players
     socket
       .to(roomId)
       .emit("receiveMessage", `Player ${assignedSymbol} has joined the room.`);
-    socket.to(roomId).emit("playerJoined", "A new player has joined the room.");
+    socket
+      .to(roomId)
+      .emit("playerJoined", {
+        message: `A new player has joined the room.`,
+        count: playerCount,
+      });
 
     // Notify new player
     socket.emit("assignSymbol", assignedSymbol);
+    socket.emit("playerJoined", {
+      message: `You joined the room.`,
+      count: playerCount,
+    });
 
     console.log(`${socket.id} joined room ${roomId} as ${assignedSymbol}`);
   });
@@ -26,8 +39,9 @@ function handleRoom(socket, io) {
     socket.to(roomId).emit("boardUpdated", { board, isXNext });
   });
 
-  socket.on("restartGame", (roomId) => {
-    socket.to(roomId).emit("gameRestarted");
+  socket.on("restartGame", (roomId, nextStarter) => {
+    socket.to(roomId).emit("gameRestarted", { nextStarter });
+    socket.emit("gameRestarted", { nextStarter });
   });
 
   socket.on("sendMessage", ({ roomId, message }) => {
@@ -38,23 +52,46 @@ function handleRoom(socket, io) {
     const symbol = roomService.getPlayerSymbol(roomId, socket.id);
     roomService.removePlayer(roomId, socket.id);
     socket.leave(roomId);
+
+    // Get updated player count
+    const room = io.sockets.adapter.rooms.get(roomId);
+    const playerCount = room ? room.size : 0;
+
     if (symbol) {
       socket
         .to(roomId)
         .emit("receiveMessage", `Player ${symbol} has left the room.`);
+      socket
+        .to(roomId)
+        .emit("playerLeft", {
+          message: `Player ${symbol} has left the room.`,
+          count: playerCount,
+        });
     }
+
     console.log(`${socket.id} left room ${roomId}`);
   });
 
-  socket.on("disconnect", () => {
-    // Remove player from all rooms
-    for (const roomId in roomService) {
+  socket.on("disconnecting", () => {
+    for (const roomId of socket.rooms) {
+      if (roomId === socket.id) continue; // Skip personal socket room
       const symbol = roomService.getPlayerSymbol(roomId, socket.id);
+      roomService.removePlayer(roomId, socket.id);
+
+      // Get updated player count
+      const room = io.sockets.adapter.rooms.get(roomId);
+      const playerCount = room ? room.size : 0;
+
       if (symbol) {
-        roomService.removePlayer(roomId, socket.id);
         socket
           .to(roomId)
           .emit("receiveMessage", `Player ${symbol} has disconnected.`);
+        socket
+          .to(roomId)
+          .emit("playerLeft", {
+            message: `Player ${symbol} has disconnected.`,
+            count: playerCount,
+          });
       }
     }
     console.log("Client disconnected:", socket.id);
